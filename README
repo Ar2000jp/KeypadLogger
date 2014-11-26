@@ -2,7 +2,16 @@ Copyright (C) 2014 Ahmad Draidi <ar2000jp@gmail.com>
 Please see the source code file for license details.
 
 KeypadLogger is a small Arduino program that logs key presses on a keypad to an
-    SD card with time stamps.
+    SD card with time-stamps.
+
+A file (time.txt) is used to set the RTCs time. This file is deleted after
+    being used. The file format is: 2014 12 30 23 59 59
+
+The key presses are logged using the system's time (millis() - startTime).
+    A time-stamp from the RTC is appended to the start of the file
+    for reference.
+
+DS1307 RTC library from: https://github.com/jrowberg/i2cdevlib
 
 For the latest version, please check out:
     https://github.com/Ar2000jp/KeypadLogger

@@ -17,14 +17,19 @@
 
 #include <Keypad.h>
 #include <SD.h>
+#include <DS1307.h>
+#include <I2Cdev.h>
+#include <Wire.h>
 
 const byte C_LedPin = 13;
 
 const byte C_SDCSPin = 53;
 
+const char C_TimeFilename[] = "time.txt";
 const char C_LogFilename[] = "log.txt";
-
 File G_LogFile;
+
+DS1307 G_RTC;
 
 // Keypad pins
 const byte C_KeypadCol1Pin = A0;
@@ -70,9 +75,41 @@ void errorHalt() {
     }
 }
 
+void rtcWorkaround() {
+    byte seconds;
+    for (int i = 0; i < 4; i++) {
+        seconds = G_RTC.getSeconds();
+        delay(300);
+        if (seconds != G_RTC.getSeconds()) {
+            // Clock is running
+            return;
+        }
+        delay(400);
+        if (seconds != G_RTC.getSeconds()) {
+            // Clock is running
+            return;
+        }
+        delay(400);
+        if (seconds != G_RTC.getSeconds()) {
+            // Clock is running
+            return;
+        }
+
+        // Toggle clock
+        G_RTC.setClockRunning(false);
+        delay(10);
+        G_RTC.setClockRunning(true);
+        delay(10);
+    }
+
+    Serial.println("Unable to start RTC clock.");
+    errorHalt();
+}
+
 void setup() {
     Serial.begin(115200);
 
+    // Busy/Error LED
     pinMode(C_LedPin, OUTPUT);
 
     Serial.print("Initializing SD card... ");
@@ -83,30 +120,102 @@ void setup() {
     }
     Serial.println("Card initialized.");
 
+    Serial.println("Initializing RTC... ");
+    Wire.begin();
+    G_RTC.initialize();
+    if (G_RTC.testConnection() == false) {
+        Serial.println("DS1307 connection failed.");
+        errorHalt();
+    }
+    G_RTC.setSquareWaveEnabled(0);
+
+    if (G_RTC.getClockRunning() != true) {
+        G_RTC.setClockRunning(true);
+    }
+
+    // Switch to 24 Hour mode
+    if (G_RTC.getMode() != 0) {
+        G_RTC.setMode(0);
+    }
+
+    // Hardware bug workaround.
+    rtcWorkaround();
+
+    // Open time file
+    File timeFile = SD.open(C_TimeFilename, FILE_READ);
+    if(timeFile) {
+        Serial.println("Setting RTC time from time file.");
+
+        // Time string format: 2014 12 30 23 59 59
+        unsigned int temp;
+        temp = timeFile.parseInt();
+        G_RTC.setYear(temp);
+        temp = timeFile.parseInt();
+        G_RTC.setMonth(temp);
+        temp = timeFile.parseInt();
+        G_RTC.setDay(temp);
+        temp = timeFile.parseInt();
+        G_RTC.setHours24(temp);
+        temp = timeFile.parseInt();
+        G_RTC.setMinutes(temp);
+        temp = timeFile.parseInt();
+        G_RTC.setSeconds(temp);
+
+        timeFile.close();
+        SD.remove((char*)C_TimeFilename);
+    }
+
+    // Open log file
     G_LogFile = SD.open(C_LogFilename, FILE_WRITE);
     if(!G_LogFile) {
         Serial.println("Error opening log file.");
         errorHalt();
     }
+
+    String dateTimeString;
+    dateTimeString += G_RTC.getYear();
+    dateTimeString += "/";
+    dateTimeString += G_RTC.getMonth();
+    dateTimeString += "/";
+    dateTimeString += G_RTC.getDay();
+    dateTimeString += " ";
+    byte h = G_RTC.getHours24();
+    if (h < 10) {
+        dateTimeString += "0";
+    }
+    dateTimeString += h;
+    dateTimeString += ":";
+    byte m = G_RTC.getMinutes();
+    if (m < 10) {
+        dateTimeString += "0";
+    }
+    dateTimeString += m;
+    dateTimeString += ":";
+    byte s = G_RTC.getSeconds();
+    if (s < 10) {
+        dateTimeString += "0";
+    }
+    dateTimeString += s;
+    G_LogFile.print("Log start date/time: ");
+    G_LogFile.println(dateTimeString);
+    Serial.print("Log start date/time: ");
+    Serial.println(dateTimeString);
 }
 
 void loop() {
-    String dataString = "";
-    char key = 0;
-    unsigned long time = 0;
+    String dataString;
+    char key;
+    unsigned long startTime = millis();
 
     while(1) {
-        key = 0;
-        while(key == 0) {
-            key = G_Keypad.getKey();
-        }
-
-        time = millis();
+        digitalWrite(C_LedPin, LOW);
+        key = G_Keypad.waitForKey();
+        digitalWrite(C_LedPin, HIGH);
 
         dataString = "Key: ";
         dataString += key;
-        dataString += " Time: ";
-        dataString += String(time);
+        dataString += " relTime: ";
+        dataString += String(millis() - startTime);
 
         Serial.println(dataString);
         G_LogFile.println(dataString);
